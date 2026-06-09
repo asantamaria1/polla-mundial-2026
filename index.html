@@ -384,20 +384,29 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;min-
 <!-- COMPARTIR -->
 <div id="sec-share" class="section">
   <div class="sec-title"><span class="accent">🔗</span> Compartir torneo</div>
-  <div class="share-box" style="border-color:rgba(232,71,26,.3)">
-    <h3>🌐 Comparte esta URL con tus compañeros</h3>
-    <p>Todos entran al mismo archivo y sus datos se guardan automáticamente en la nube. No se necesitan códigos.</p>
-    <div class="code-display" id="share-url" style="cursor:pointer" onclick="copyUrl()">Cargando URL...</div>
+  <div class="share-box">
+    <h3>📤 Exportar mi torneo</h3>
+    <p>Genera un código con todos los jugadores, pronósticos y resultados actuales para enviarlo por WhatsApp o correo.</p>
+    <div class="code-display" id="export-code">Haz clic en "Generar código"</div>
     <div class="code-row">
-      <button class="btn-copy" onclick="copyUrl()">📋 Copiar URL</button>
+      <button class="btn-copy" onclick="generateCode()">⟳ Generar</button>
+      <button class="btn-copy" onclick="copyCode()">📋 Copiar</button>
     </div>
   </div>
   <div class="share-box">
+    <h3>📥 Importar desde código</h3>
+    <p>Pega aquí el código que te envió un compañero para sincronizar la tabla.</p>
+    <div class="import-row">
+      <input id="import-input" placeholder="Pega el código aquí...">
+      <button class="btn-sm-orange" onclick="importCode()">Importar</button>
+    </div>
+  </div>
+  <div class="share-box" style="border-color:rgba(232,71,26,.3)">
     <h3>💡 ¿Cómo funciona?</h3>
-    <p>1. Copia la URL de esta página y mándala por WhatsApp al grupo.<br>
-    2. Cada compañero entra, se registra con su correo y empieza a pronosticar.<br>
-    3. La tabla en vivo se actualiza automáticamente para todos.<br>
-    4. Tú como admin ingresas los resultados oficiales desde ⚙️ Admin.</p>
+    <p>1. Cada jugador se registra en su dispositivo con su correo.<br>
+    2. Uno exporta el torneo y manda el código al grupo de WhatsApp.<br>
+    3. Los demás lo importan y ven la tabla completa.<br>
+    4. Repitan cuando quieran actualizar la tabla.</p>
   </div>
 </div>
 
@@ -682,141 +691,25 @@ function renderGroupStandingsSection(userPreds){
   return html;
 }
 // ══════════════════════════════════════
-// FIREBASE CONFIG
+// STATE — localStorage
 // ══════════════════════════════════════
-const firebaseConfig = {
-  apiKey: "AIzaSyBHwbAZyXDkNBcKyD0rinN8Zg556EDkRmI",
-  authDomain: "mundial-2026-e1f51.firebaseapp.com",
-  projectId: "mundial-2026-e1f51",
-  storageBucket: "mundial-2026-e1f51.firebasestorage.app",
-  messagingSenderId: "642695427613",
-  appId: "1:642695427613:web:954a41639654ff5a3138f4"
+const LS='nn_mundial26';
+let S={
+  users:[],
+  groupResults:{},
+  koMatches:[],
+  tournamentOpen:true,
+  koEnabled:false,
+  currentUserId:null
 };
 
-// Load Firebase from CDN
-const _fbScript = document.createElement('script');
-_fbScript.type = 'module';
-_fbScript.textContent = `
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged }
-    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-  import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, getDocs, updateDoc, serverTimestamp }
-    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
-  const app  = initializeApp(${JSON.stringify(firebaseConfig)});
-  const auth = getAuth(app);
-  const db   = getFirestore(app);
-
-  // Expose to global scope
-  window._FB = { auth, db, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-    signOut, onAuthStateChanged, doc, setDoc, getDoc, onSnapshot, collection,
-    getDocs, updateDoc, serverTimestamp };
-  window._fbReady = true;
-  window.dispatchEvent(new Event('fb-ready'));
-`;
-document.head.appendChild(_fbScript);
-
-// ══════════════════════════════════════
-// STATE — ahora sincronizado con Firebase
-// ══════════════════════════════════════
-let S = {
-  users: [],          // cacheado de Firestore
-  groupResults: {},
-  koMatches: [],
-  tournamentOpen: true,
-  koEnabled: false,
-  currentUserId: null,
-  currentUserProfile: null,
-};
-
-// ── Listeners activos
-let _unsubUsers    = null;
-let _unsubTournament = null;
-
-function me(){ return S.currentUserProfile; }
+function loadState(){ try{const r=localStorage.getItem(LS);if(r)S=JSON.parse(r);}catch(e){} }
+function saveState(){ try{localStorage.setItem(LS,JSON.stringify(S));}catch(e){} }
+function saveTournamentData(){ saveState(); }
+function saveUserPreds(){ saveState(); }
+function simpleHash(s){ let h=0;for(let i=0;i<s.length;i++){h=(Math.imul(31,h)+s.charCodeAt(i))|0;}return h.toString(36); }
 function norm(e){ return e.trim().toLowerCase(); }
-
-// ── Guardar datos de torneo (solo admin)
-async function saveTournamentData(){
-  try{
-    const {db,doc,setDoc} = window._FB;
-    await setDoc(doc(db,'tournament','config'),{
-      groupResults: S.groupResults,
-      koMatches:    S.koMatches,
-      tournamentOpen: S.tournamentOpen,
-      koEnabled:    S.koEnabled,
-    },{merge:true});
-  }catch(e){ console.error('saveTournamentData',e); showToast('Error guardando','err'); }
-}
-
-// ── Guardar pronósticos del usuario actual
-async function saveUserPreds(){
-  try{
-    const u = me();
-    if(!u) return;
-    const {db,doc,setDoc} = window._FB;
-    await setDoc(doc(db,'users',u.id),{
-      groupPreds: u.groupPreds||{},
-      koPreds:    u.koPreds||{},
-    },{merge:true});
-  }catch(e){ console.error('saveUserPreds',e); showToast('Error guardando','err'); }
-}
-
-// ── Suscribirse a cambios en tiempo real
-function subscribeAll(){
-  const {db,doc,collection,onSnapshot} = window._FB;
-
-  // Tournament config
-  _unsubTournament = onSnapshot(doc(db,'tournament','config'), snap=>{
-    if(snap.exists()){
-      const d = snap.data();
-      S.groupResults   = d.groupResults   || {};
-      S.koMatches      = d.koMatches      || [];
-      S.tournamentOpen = d.tournamentOpen !== undefined ? d.tournamentOpen : true;
-      S.koEnabled      = d.koEnabled      || false;
-    }
-    // Refresh UI si hay sesión activa
-    if(S.currentUserId) refreshLiveUI();
-  });
-
-  // All users (for leaderboard)
-  _unsubUsers = onSnapshot(collection(db,'users'), snap=>{
-    S.users = snap.docs.map(d=>({id:d.id,...d.data()}));
-    // Update local profile
-    if(S.currentUserId){
-      S.currentUserProfile = S.users.find(u=>u.id===S.currentUserId)||null;
-    }
-    if(S.currentUserId) refreshLiveUI();
-  });
-}
-
-function unsubscribeAll(){
-  if(_unsubUsers)    { _unsubUsers();    _unsubUsers=null; }
-  if(_unsubTournament){ _unsubTournament(); _unsubTournament=null; }
-}
-
-function refreshLiveUI(){
-  // Re-render whichever section is active
-  const active = document.querySelector('.section.active');
-  if(!active) return;
-  const id = active.id.replace('sec-','');
-  if(id==='leaderboard')  renderLeaderboard();
-  if(id==='predictions')  renderPredictions();
-  if(id==='stats')        renderStats();
-  if(id==='knockout')     renderKnockout();
-  if(id==='admin')        renderAdmin();
-  // Always refresh standings if visible
-  const liveWrap=document.getElementById('group-standings-live');
-  if(liveWrap && me()) liveWrap.innerHTML=renderGroupStandingsSection(me().groupPreds||{});
-  // Update banner
-  const b=document.getElementById('status-banner');
-  if(b){
-    if(S.tournamentOpen){b.className='open';b.textContent='🟢 Pronósticos abiertos';}
-    else{b.className='closed';b.textContent='🔴 Torneo en curso · Pronósticos cerrados';}
-  }
-  document.getElementById('ko-tab').style.display=S.koEnabled?'':'none';
-  document.getElementById('header-phase').textContent=S.koEnabled?'FASE FINAL ACTIVA':'FASE DE GRUPOS';
-}
+function me(){ return S.users.find(u=>u.id===S.currentUserId)||null; }
 
 // ══════════════════════════════════════
 // AUTH
@@ -829,82 +722,59 @@ function authMode(m){
 function showAErr(msg){ const e=document.getElementById('auth-err');e.textContent=msg;e.style.display='block'; }
 function hideAErr(){ document.getElementById('auth-err').style.display='none'; }
 
-async function doRegister(){
-  const name  = document.getElementById('re-name').value.trim();
-  const email = norm(document.getElementById('re-email').value);
-  const pass  = document.getElementById('re-pass').value;
-  if(!name)             { showAErr('Ingresa tu nombre.');return; }
-  if(!email.includes('@')){ showAErr('Correo inválido.');return; }
-  if(pass.length<6)     { showAErr('Contraseña mínimo 6 caracteres.');return; }
-
-  showAErr('Creando cuenta...');
-  try{
-    const {auth,db,doc,setDoc,getDocs,collection,createUserWithEmailAndPassword} = window._FB;
-    // Check if first user → admin
-    const snap = await getDocs(collection(db,'users'));
-    const isAdmin = snap.empty;
-
-    const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    const uid  = cred.user.uid;
-
-    await setDoc(doc(db,'users',uid),{
-      id: uid, name, email,
-      groupPreds:{}, koPreds:{},
-      isAdmin,
-      createdAt: new Date().toISOString(),
-    });
-    hideAErr();
-  }catch(e){
-    const msg = e.code==='auth/email-already-in-use'?'Ya existe una cuenta con ese correo.'
-              : e.code==='auth/weak-password'?'Contraseña muy débil.'
-              : 'Error: '+e.message;
-    showAErr(msg);
-  }
+function doRegister(){
+  const name=document.getElementById('re-name').value.trim();
+  const email=norm(document.getElementById('re-email').value);
+  const pass=document.getElementById('re-pass').value;
+  if(!name){showAErr('Ingresa tu nombre.');return;}
+  if(!email.includes('@')){showAErr('Correo inválido.');return;}
+  if(pass.length<6){showAErr('Contraseña mínimo 6 caracteres.');return;}
+  if(S.users.find(u=>u.email===email)){showAErr('Ya existe una cuenta con ese correo.');return;}
+  const id='u'+Date.now();
+  const isAdmin=S.users.length===0;
+  S.users.push({id,name,email,passHash:simpleHash(pass),groupPreds:{},koPreds:{},isAdmin});
+  S.currentUserId=id;
+  saveState();
+  closeAuth();
 }
 
-async function doLogin(){
-  const email = norm(document.getElementById('li-email').value);
-  const pass  = document.getElementById('li-pass').value;
-  showAErr('Ingresando...');
-  try{
-    const {auth,signInWithEmailAndPassword} = window._FB;
-    await signInWithEmailAndPassword(auth, email, pass);
-    hideAErr();
-  }catch(e){
-    const msg = e.code==='auth/user-not-found'||e.code==='auth/invalid-credential'?'Correo o contraseña incorrectos.'
-              : 'Error: '+e.message;
-    showAErr(msg);
-  }
+function doLogin(){
+  const email=norm(document.getElementById('li-email').value);
+  const pass=document.getElementById('li-pass').value;
+  const user=S.users.find(u=>u.email===email);
+  if(!user){showAErr('No existe cuenta con ese correo.');return;}
+  if(user.passHash!==simpleHash(pass)){showAErr('Contraseña incorrecta.');return;}
+  S.currentUserId=user.id;
+  saveState();
+  closeAuth();
 }
 
-async function doLogout(){
-  unsubscribeAll();
-  S.currentUserId=null; S.currentUserProfile=null;
-  const {auth,signOut} = window._FB;
-  await signOut(auth);
+function doLogout(){
+  S.currentUserId=null;
+  saveState();
   document.getElementById('auth-screen').style.display='flex';
   authMode('login');
+}
+
+function closeAuth(){
+  document.getElementById('auth-screen').style.display='none';
+  initApp();
 }
 
 // ══════════════════════════════════════
 // INIT
 // ══════════════════════════════════════
-function initApp(user){
-  S.currentUserId      = user.uid;
-  S.currentUserProfile = S.users.find(u=>u.id===user.uid) || null;
-
-  document.getElementById('auth-screen').style.display='none';
-  document.getElementById('ub-avatar').textContent = (S.currentUserProfile?.name||'?').charAt(0).toUpperCase();
-  document.getElementById('ub-name').textContent   = S.currentUserProfile?.name||user.email;
-  document.getElementById('admin-tab').style.display = S.currentUserProfile?.isAdmin?'':'none';
-  document.getElementById('ko-tab').style.display    = S.koEnabled?'':'none';
-  document.getElementById('header-phase').textContent= S.koEnabled?'FASE FINAL ACTIVA':'FASE DE GRUPOS';
-
+function initApp(){
+  const u=me();
+  if(!u){document.getElementById('auth-screen').style.display='flex';return;}
+  document.getElementById('ub-avatar').textContent=u.name.charAt(0).toUpperCase();
+  document.getElementById('ub-name').textContent=u.name;
+  document.getElementById('admin-tab').style.display=u.isAdmin?'':'none';
+  document.getElementById('ko-tab').style.display=S.koEnabled?'':'none';
+  document.getElementById('header-phase').textContent=S.koEnabled?'FASE FINAL ACTIVA':'FASE DE GRUPOS';
   const b=document.getElementById('status-banner');
   if(S.tournamentOpen){b.className='open';b.textContent='🟢 Pronósticos abiertos';}
   else{b.className='closed';b.textContent='🔴 Torneo en curso · Pronósticos cerrados';}
-
-  subscribeAll();
   renderLeaderboard();
 }
 
@@ -1655,64 +1525,57 @@ function toggleTournament(){
 // ══════════════════════════════════════
 
 
-function copyUrl(){
-  const url=window.location.href;
-  navigator.clipboard.writeText(url).then(()=>showToast('URL copiada ✓','ok'));
+function generateCode(){
+  const payload={
+    users:S.users.map(u=>({...u,passHash:''})),
+    groupResults:S.groupResults,
+    koMatches:S.koMatches,
+    tournamentOpen:S.tournamentOpen,
+    koEnabled:S.koEnabled,
+    exportedAt:new Date().toISOString()
+  };
+  const code=btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  document.getElementById('export-code').textContent=code;
+  showToast('Código generado ✓','ok');
 }
-// Set share URL display
-document.getElementById('share-url').textContent=window.location.href;
+function copyCode(){
+  const code=document.getElementById('export-code').textContent;
+  if(code.startsWith('Haz')){generateCode();return;}
+  navigator.clipboard.writeText(code).then(()=>showToast('Copiado al portapapeles ✓','ok'));
+}
+function importCode(){
+  const code=document.getElementById('import-input').value.trim();
+  if(!code){showToast('Pega un código primero','err');return;}
+  try{
+    const imp=JSON.parse(decodeURIComponent(escape(atob(code))));
+    if(!imp.users)throw new Error();
+    let added=0;
+    imp.users.forEach(iu=>{
+      const ex=S.users.find(u=>u.email===iu.email);
+      if(ex){Object.assign(ex.groupPreds,iu.groupPreds||{});Object.assign(ex.koPreds,iu.koPreds||{});}
+      else{S.users.push({...iu,passHash:iu.passHash||''});added++;}
+    });
+    if(imp.groupResults)Object.assign(S.groupResults,imp.groupResults);
+    if(imp.koMatches)S.koMatches=imp.koMatches;
+    if(imp.tournamentOpen!==undefined)S.tournamentOpen=imp.tournamentOpen;
+    if(imp.koEnabled!==undefined){S.koEnabled=imp.koEnabled;document.getElementById('ko-tab').style.display=S.koEnabled?'':'none';}
+    saveState();
+    document.getElementById('import-input').value='';
+    renderLeaderboard();
+    showToast('Importado: '+imp.users.length+' jugadores ✓','ok');
+  }catch(e){showToast('Código inválido','err');}
+}
 
 // ══════════════════════════════════════
 // AUTH UI
 // ══════════════════════════════════════
 
 // ══════════════════════════════════════
-// BOOT — wait for Firebase then set up auth listener
-// ══════════════════════════════════════
-window.addEventListener('fb-ready', ()=>{
-  const {auth, onAuthStateChanged} = window._FB;
-  onAuthStateChanged(auth, async (firebaseUser)=>{
-    if(firebaseUser){
-      // Fetch user profile from Firestore
-      const {db,doc,getDoc} = window._FB;
-      const snap = await getDoc(doc(db,'users',firebaseUser.uid));
-      if(snap.exists()){
-        S.currentUserProfile = {id:firebaseUser.uid, ...snap.data()};
-        S.currentUserId = firebaseUser.uid;
-      }
-      initApp(firebaseUser);
-    } else {
-      unsubscribeAll();
-      S.currentUserId=null; S.currentUserProfile=null;
-      document.getElementById('auth-screen').style.display='flex';
-      authMode('login');
-    }
-  });
-});
-// Show auth screen while waiting
-document.getElementById('auth-screen').style.display='flex';
-authMode('login');
-</script>
-</body>
-</html>
-
-// ══════════════════════════════════════
-// KNOCKOUT PHASE
-// ══════════════════════════════════════
-function showToast(msg,type=''){
-  const t=document.getElementById('toast');
-  t.textContent=msg;
-  t.className=type?'show '+type:'show';
-  clearTimeout(t._t);
-  t._t=setTimeout(()=>t.className='',2600);
-}
-
-// ══════════════════════════════════════
 // BOOT
 // ══════════════════════════════════════
 loadState();
 if(S.currentUserId&&S.users.find(u=>u.id===S.currentUserId)){closeAuth();}
-else{S.currentUserId=null;document.getElementById('auth-screen').style.display='flex';}
+else{S.currentUserId=null;document.getElementById('auth-screen').style.display='flex';authMode('login');}
 </script>
 </body>
 </html>
