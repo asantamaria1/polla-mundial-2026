@@ -301,6 +301,7 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;min-
       <label class="field-label">Contraseña</label>
       <input id="li-pass" class="field-input" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()">
       <button class="btn-orange" onclick="doLogin()">INGRESAR →</button>
+      <button class="btn-ghost" onclick="doForgotPassword()">¿Olvidaste tu contraseña?</button>
     </div>
     <div id="form-register" style="display:none">
       <label class="field-label">Tu nombre</label>
@@ -691,25 +692,74 @@ function renderGroupStandingsSection(userPreds){
   return html;
 }
 // ══════════════════════════════════════
-// STATE — localStorage
+// STATE
 // ══════════════════════════════════════
-const LS='nn_mundial26';
 let S={
-  users:[],
-  groupResults:{},
-  koMatches:[],
-  tournamentOpen:true,
-  koEnabled:false,
-  currentUserId:null
+  users:[], groupResults:{}, koMatches:[],
+  tournamentOpen:true, koEnabled:false, currentUserId:null
 };
+let _db=null, _auth=null, _unsubConfig=null, _unsubUsers=null;
 
-function loadState(){ try{const r=localStorage.getItem(LS);if(r)S=JSON.parse(r);}catch(e){} }
-function saveState(){ try{localStorage.setItem(LS,JSON.stringify(S));}catch(e){} }
-function saveTournamentData(){ saveState(); }
-function saveUserPreds(){ saveState(); }
-function simpleHash(s){ let h=0;for(let i=0;i<s.length;i++){h=(Math.imul(31,h)+s.charCodeAt(i))|0;}return h.toString(36); }
-function norm(e){ return e.trim().toLowerCase(); }
 function me(){ return S.users.find(u=>u.id===S.currentUserId)||null; }
+function norm(e){ return e.trim().toLowerCase(); }
+
+async function saveTournamentData(){
+  if(!_db) return;
+  const {doc,setDoc}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  await setDoc(doc(_db,'tournament','config'),{
+    groupResults:S.groupResults, koMatches:S.koMatches,
+    tournamentOpen:S.tournamentOpen, koEnabled:S.koEnabled
+  },{merge:true});
+}
+
+async function saveUserPreds(){
+  if(!_db) return;
+  const u=me(); if(!u) return;
+  const {doc,setDoc}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  await setDoc(doc(_db,'users',u.id),{groupPreds:u.groupPreds||{},koPreds:u.koPreds||{}},{merge:true});
+}
+
+function subscribeFirestore(){
+  import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js').then(({doc,collection,onSnapshot})=>{
+    _unsubConfig=onSnapshot(doc(_db,'tournament','config'),snap=>{
+      if(snap.exists()){
+        const d=snap.data();
+        S.groupResults=d.groupResults||{};
+        S.koMatches=d.koMatches||[];
+        S.tournamentOpen=d.tournamentOpen!==undefined?d.tournamentOpen:true;
+        S.koEnabled=d.koEnabled||false;
+      }
+      refreshUI();
+    });
+    _unsubUsers=onSnapshot(collection(_db,'users'),snap=>{
+      S.users=snap.docs.map(d=>({id:d.id,...d.data()}));
+      refreshUI();
+    });
+  });
+}
+
+function refreshUI(){
+  const u=me();
+  if(!u) return;
+  document.getElementById('ub-avatar').textContent=u.name.charAt(0).toUpperCase();
+  document.getElementById('ub-name').textContent=u.name;
+  document.getElementById('admin-tab').style.display=u.isAdmin?'':'none';
+  document.getElementById('ko-tab').style.display=S.koEnabled?'':'none';
+  document.getElementById('header-phase').textContent=S.koEnabled?'FASE FINAL ACTIVA':'FASE DE GRUPOS';
+  const b=document.getElementById('status-banner');
+  if(S.tournamentOpen){b.className='open';b.textContent='🟢 Pronósticos abiertos';}
+  else{b.className='closed';b.textContent='🔴 Torneo en curso · Pronósticos cerrados';}
+  const active=document.querySelector('.section.active');
+  if(!active) return;
+  const id=active.id.replace('sec-','');
+  if(id==='leaderboard') renderLeaderboard();
+  if(id==='predictions') renderPredictions();
+  if(id==='stats') renderStats();
+  if(id==='knockout') renderKnockout();
+  if(id==='admin') renderAdmin();
+  const lw=document.getElementById('group-standings-live');
+  if(lw) lw.innerHTML=renderGroupStandingsSection((me()||{}).groupPreds||{});
+}
 
 // ══════════════════════════════════════
 // AUTH
@@ -719,62 +769,79 @@ function authMode(m){
   document.querySelectorAll('.auth-tab').forEach((t,i)=>t.classList.toggle('active',['login','register'][i]===m));
   hideAErr();
 }
-function showAErr(msg){ const e=document.getElementById('auth-err');e.textContent=msg;e.style.display='block'; }
-function hideAErr(){ document.getElementById('auth-err').style.display='none'; }
+function showAErr(msg){const e=document.getElementById('auth-err');e.textContent=msg;e.style.display='block';}
+function hideAErr(){document.getElementById('auth-err').style.display='none';}
 
-function doRegister(){
+async function doRegister(){
   const name=document.getElementById('re-name').value.trim();
   const email=norm(document.getElementById('re-email').value);
   const pass=document.getElementById('re-pass').value;
   if(!name){showAErr('Ingresa tu nombre.');return;}
   if(!email.includes('@')){showAErr('Correo inválido.');return;}
   if(pass.length<6){showAErr('Contraseña mínimo 6 caracteres.');return;}
-  if(S.users.find(u=>u.email===email)){showAErr('Ya existe una cuenta con ese correo.');return;}
-  const id='u'+Date.now();
-  const isAdmin=S.users.length===0;
-  S.users.push({id,name,email,passHash:simpleHash(pass),groupPreds:{},koPreds:{},isAdmin});
-  S.currentUserId=id;
-  saveState();
-  closeAuth();
+  showAErr('Creando cuenta...');
+  try{
+    const {createUserWithEmailAndPassword}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+    const {doc,setDoc,collection,getDocs}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const snap=await getDocs(collection(_db,'users'));
+    const isAdmin=snap.empty;
+    const cred=await createUserWithEmailAndPassword(_auth,email,pass);
+    await setDoc(doc(_db,'users',cred.user.uid),{
+      id:cred.user.uid,name,email,groupPreds:{},koPreds:{},isAdmin,
+      createdAt:new Date().toISOString()
+    });
+    hideAErr();
+  }catch(e){
+    showAErr(e.code==='auth/email-already-in-use'?'Ya existe una cuenta con ese correo.':'Error: '+e.message);
+  }
 }
 
-function doLogin(){
+async function doLogin(){
   const email=norm(document.getElementById('li-email').value);
   const pass=document.getElementById('li-pass').value;
-  const user=S.users.find(u=>u.email===email);
-  if(!user){showAErr('No existe cuenta con ese correo.');return;}
-  if(user.passHash!==simpleHash(pass)){showAErr('Contraseña incorrecta.');return;}
-  S.currentUserId=user.id;
-  saveState();
-  closeAuth();
+  if(!email||!pass){showAErr('Completa todos los campos.');return;}
+  showAErr('Ingresando...');
+  try{
+    const {signInWithEmailAndPassword}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+    await signInWithEmailAndPassword(_auth,email,pass);
+    hideAErr();
+  }catch(e){
+    showAErr('Correo o contraseña incorrectos.');
+  }
 }
 
-function doLogout(){
+async function doLogout(){
+  if(_unsubConfig){_unsubConfig();_unsubConfig=null;}
+  if(_unsubUsers){_unsubUsers();_unsubUsers=null;}
   S.currentUserId=null;
-  saveState();
+  const {signOut}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+  await signOut(_auth);
   document.getElementById('auth-screen').style.display='flex';
   authMode('login');
 }
 
-function closeAuth(){
-  document.getElementById('auth-screen').style.display='none';
-  initApp();
+async function doForgotPassword(){
+  const email=norm(document.getElementById('li-email').value);
+  if(!email||!email.includes('@')){showAErr('Ingresa tu correo primero.');return;}
+  try{
+    const {sendPasswordResetEmail}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+    await sendPasswordResetEmail(_auth,email);
+    showAErr('✅ Correo de recuperación enviado a '+email+'. Revisa tu bandeja.');
+    document.getElementById('auth-err').style.background='rgba(34,197,94,.08)';
+    document.getElementById('auth-err').style.borderColor='rgba(34,197,94,.2)';
+    document.getElementById('auth-err').style.color='var(--green)';
+  }catch(e){
+    showAErr('No existe cuenta con ese correo.');
+  }
 }
 
 // ══════════════════════════════════════
 // INIT
 // ══════════════════════════════════════
-function initApp(){
-  const u=me();
-  if(!u){document.getElementById('auth-screen').style.display='flex';return;}
-  document.getElementById('ub-avatar').textContent=u.name.charAt(0).toUpperCase();
-  document.getElementById('ub-name').textContent=u.name;
-  document.getElementById('admin-tab').style.display=u.isAdmin?'':'none';
-  document.getElementById('ko-tab').style.display=S.koEnabled?'':'none';
-  document.getElementById('header-phase').textContent=S.koEnabled?'FASE FINAL ACTIVA':'FASE DE GRUPOS';
-  const b=document.getElementById('status-banner');
-  if(S.tournamentOpen){b.className='open';b.textContent='🟢 Pronósticos abiertos';}
-  else{b.className='closed';b.textContent='🔴 Torneo en curso · Pronósticos cerrados';}
+function initApp(uid){
+  S.currentUserId=uid;
+  document.getElementById('auth-screen').style.display='none';
+  subscribeFirestore();
   renderLeaderboard();
 }
 
@@ -793,6 +860,29 @@ function showTab(name,btn){
   if(name==='calendar')renderCalendar();
   if(name==='admin')renderAdmin();
 }
+
+// ══════════════════════════════════════
+// BOOT — Firebase module
+// ══════════════════════════════════════
+(async()=>{
+  const {initializeApp}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+  const {getAuth,onAuthStateChanged}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+  const {getFirestore}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  const app=initializeApp({
+    apiKey:"AIzaSyBHwbAZyXDkNBcKyD0rinN8Zg556EDkRmI",
+    authDomain:"mundial-2026-e1f51.firebaseapp.com",
+    projectId:"mundial-2026-e1f51",
+    storageBucket:"mundial-2026-e1f51.firebasestorage.app",
+    messagingSenderId:"642695427613",
+    appId:"1:642695427613:web:954a41639654ff5a3138f4"
+  });
+  _auth=getAuth(app);
+  _db=getFirestore(app);
+  onAuthStateChanged(_auth,user=>{
+    if(user){initApp(user.uid);}
+    else{document.getElementById('auth-screen').style.display='flex';authMode('login');}
+  });
+})();
 
 // ══════════════════════════════════════
 // SCORING — sistema de 4 componentes
@@ -1339,7 +1429,10 @@ function renderAdmin(){
     </div>
   </div>`;
   html+=`<div class="admin-card">
-    <h3>Ingresar resultados de grupos</h3>
+    <h3>👥 Gestión de jugadores</h3>
+    <p>Elimina cuentas de jugadores si es necesario. Los pronósticos del jugador también serán eliminados.</p>
+    <div id="admin-users-list"></div>
+  </div>`;
     <p>Ingresa los marcadores oficiales. Los puntos se calculan automáticamente para todos.</p>
     <div id="admin-group-results"></div>
   </div>`;
@@ -1357,6 +1450,38 @@ function renderAdmin(){
   document.getElementById('admin-content').innerHTML=html;
   renderAdminGroupResults();
   renderAdminKoSetup();
+  renderAdminUsers();
+}
+
+function renderAdminUsers(){
+  const w=document.getElementById('admin-users-list');
+  if(!w) return;
+  const u=me();
+  let html='';
+  S.users.forEach(player=>{
+    const pts=userTotalPts(player);
+    const isMe=player.id===S.currentUserId;
+    html+=`<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+      <div style="width:32px;height:32px;border-radius:50%;background:var(--nn-orange);display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:16px;color:#fff;flex-shrink:0">${player.name.charAt(0).toUpperCase()}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:14px">${player.name}${player.isAdmin?' <span style="font-size:9px;background:var(--nn-orange);color:#fff;padding:1px 5px;border-radius:3px">ADMIN</span>':''}${isMe?' <span style="font-size:10px;color:var(--nn-orange)">(tú)</span>':''}</div>
+        <div style="font-size:11px;color:var(--muted)">${player.email} · ${pts} pts</div>
+      </div>
+      ${!isMe&&!player.isAdmin?`<button onclick="deleteUser('${player.id}')" style="padding:5px 12px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:6px;color:#f87171;font-size:12px;font-weight:600;cursor:pointer;font-family:'Barlow',sans-serif">Eliminar</button>`:''}
+    </div>`;
+  });
+  w.innerHTML=html||'<p style="font-size:13px;color:var(--muted)">No hay jugadores registrados.</p>';
+}
+
+async function deleteUser(uid){
+  if(!confirm('¿Eliminar este jugador y todos sus pronósticos? Esta acción no se puede deshacer.')) return;
+  try{
+    const {doc,deleteDoc}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    await deleteDoc(doc(_db,'users',uid));
+    showToast('Jugador eliminado ✓','ok');
+  }catch(e){
+    showToast('Error al eliminar','err');
+  }
 }
 
 function renderAdminGroupResults(){
@@ -1573,9 +1698,11 @@ function importCode(){
 // ══════════════════════════════════════
 // BOOT
 // ══════════════════════════════════════
-loadState();
-if(S.currentUserId&&S.users.find(u=>u.id===S.currentUserId)){closeAuth();}
-else{S.currentUserId=null;document.getElementById('auth-screen').style.display='flex';authMode('login');}
+document.getElementById('auth-screen').style.display='flex';
+authMode('login');
+</script>
+<script type="module">
+// Module script disabled — all Firebase logic is inline above via dynamic import
 </script>
 </body>
 </html>
