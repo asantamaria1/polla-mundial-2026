@@ -291,17 +291,17 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;min-
       <div class="auth-world">Polla Mundial 2026</div>
     </div>
     <div class="auth-tabs">
-      <button class="auth-tab active" onclick="authMode('login')">Ingresar</button>
-      <button class="auth-tab" onclick="authMode('register')">Registrarse</button>
+      <button class="auth-tab active" id="tab-login">Ingresar</button>
+      <button class="auth-tab" id="tab-register">Registrarse</button>
     </div>
     <div id="auth-err" class="auth-err" style="display:none"></div>
     <div id="form-login">
       <label class="field-label">Correo electrónico</label>
-      <input id="li-email" class="field-input" type="email" placeholder="cristiano.ronaldo@netnow.cl" onkeydown="if(event.key==='Enter')doLogin()">
+      <input id="li-email" class="field-input" type="email" placeholder="cristiano.ronaldo@netnow.cl">
       <label class="field-label">Contraseña</label>
-      <input id="li-pass" class="field-input" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()">
-      <button class="btn-orange" onclick="doLogin()">INGRESAR →</button>
-      <button class="btn-ghost" onclick="doForgotPassword()">¿Olvidaste tu contraseña?</button>
+      <input id="li-pass" class="field-input" type="password" placeholder="••••••••">
+      <button class="btn-orange" id="btn-login">INGRESAR →</button>
+      <button class="btn-ghost" id="btn-forgot">¿Olvidaste tu contraseña?</button>
     </div>
     <div id="form-register" style="display:none">
       <label class="field-label">Tu nombre</label>
@@ -309,8 +309,8 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;min-
       <label class="field-label">Correo electrónico</label>
       <input id="re-email" class="field-input" type="email" placeholder="cristiano.ronaldo@netnow.cl">
       <label class="field-label">Contraseña</label>
-      <input id="re-pass" class="field-input" type="password" placeholder="Mínimo 6 caracteres" onkeydown="if(event.key==='Enter')doRegister()">
-      <button class="btn-orange" onclick="doRegister()">CREAR CUENTA ⚽</button>
+      <input id="re-pass" class="field-input" type="password" placeholder="Mínimo 6 caracteres">
+      <button class="btn-orange" id="btn-register">CREAR CUENTA ⚽</button>
     </div>
     <p class="auth-info">1 cuenta por correo · Pronósticos se bloquean al iniciar el torneo</p>
   </div>
@@ -333,7 +333,7 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;min-
     <div class="header-user">
       <div class="avatar-sm" id="ub-avatar">?</div>
       <span class="user-name-sm" id="ub-name">—</span>
-      <button class="btn-logout" onclick="doLogout()">Salir</button>
+      <button class="btn-logout" id="btn-logout-hdr">Salir</button>
     </div>
   </div>
 </header>
@@ -342,13 +342,13 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;min-
 <nav class="sticky-nav">
   <div class="tabs-wrap">
     <div class="tabs">
-      <button class="tab active" onclick="showTab('leaderboard',this)">🏅 Tabla en vivo</button>
-      <button class="tab" onclick="showTab('predictions',this)">⚽ Pronósticos</button>
-      <button class="tab" id="ko-tab" onclick="showTab('knockout',this)" style="display:none">🏆 Fase final</button>
-      <button class="tab" onclick="showTab('stats',this)">📊 Mis stats</button>
-      <button class="tab" onclick="showTab('calendar',this)">📅 Calendario</button>
-      <button class="tab" onclick="showTab('share',this)">🔗 Compartir</button>
-      <button class="tab" id="admin-tab" onclick="showTab('admin',this)" style="display:none">⚙️ Admin</button>
+      <button class="tab active" data-tab="leaderboard">🏅 Tabla en vivo</button>
+      <button class="tab" data-tab="predictions">⚽ Pronósticos</button>
+      <button class="tab" id="ko-tab" data-tab="knockout" style="display:none">🏆 Fase final</button>
+      <button class="tab" data-tab="stats">📊 Mis stats</button>
+      <button class="tab" data-tab="calendar">📅 Calendario</button>
+      <button class="tab" data-tab="share">🔗 Compartir</button>
+      <button class="tab" id="admin-tab" data-tab="admin" style="display:none">⚙️ Admin</button>
     </div>
   </div>
 </nav>
@@ -1692,54 +1692,70 @@ function importCode(){
 }
 
 // ══════════════════════════════════════
-// AUTH UI
+// BOOT
 // ══════════════════════════════════════
+document.addEventListener('DOMContentLoaded', ()=>{
+  // Auth buttons
+  document.getElementById('tab-login').addEventListener('click',()=>authMode('login'));
+  document.getElementById('tab-register').addEventListener('click',()=>authMode('register'));
+  document.getElementById('btn-login').addEventListener('click',doLogin);
+  document.getElementById('btn-register').addEventListener('click',doRegister);
+  document.getElementById('btn-forgot').addEventListener('click',doForgotPassword);
+  document.getElementById('li-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+  document.getElementById('re-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doRegister();});
 
-// ══════════════════════════════════════
-// BOOT — Firebase module
-// ══════════════════════════════════════
-document.getElementById('auth-screen').style.display='flex';
-authMode('login');
-
-(async()=>{
-  const {initializeApp}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
-  const {getAuth,onAuthStateChanged}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-  const {getFirestore}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-  const app=initializeApp({
-    apiKey:"AIzaSyBHwbAZyXDkNBcKyD0rinN8Zg556EDkRmI",
-    authDomain:"mundial-2026-e1f51.firebaseapp.com",
-    projectId:"mundial-2026-e1f51",
-    storageBucket:"mundial-2026-e1f51.firebasestorage.app",
-    messagingSenderId:"642695427613",
-    appId:"1:642695427613:web:954a41639654ff5a3138f4"
+  // Nav tabs
+  document.querySelectorAll('.tab').forEach(tab=>{
+    tab.addEventListener('click',function(){ showTab(this.dataset.tab, this); });
   });
-  _auth=getAuth(app);
-  _db=getFirestore(app);
-  onAuthStateChanged(_auth,user=>{
-    if(user){initApp(user.uid);}
-    else{document.getElementById('auth-screen').style.display='flex';authMode('login');}
-  });
-})();
 
-// Exponer funciones al scope global para los onclick del HTML
-window.authMode=authMode;
-window.doLogin=doLogin;
-window.doRegister=doRegister;
-window.doLogout=doLogout;
-window.doForgotPassword=doForgotPassword;
-window.showTab=showTab;
-window.saveGroupPred=saveGroupPred;
-window.saveKoPred=saveKoPred;
-window.saveGroupResult=saveGroupResult;
-window.toggleTournament=toggleTournament;
-window.toggleKoPhase=toggleKoPhase;
-window.saveKoTeams=saveKoTeams;
-window.saveKoResult=saveKoResult;
-window.markChanged=markChanged;
-window.generateCode=generateCode;
-window.copyCode=copyCode;
-window.importCode=importCode;
-window.deleteUser=deleteUser;
+  // Logout
+  document.getElementById('btn-logout-hdr').addEventListener('click', doLogout);
+
+  // Share buttons
+  document.querySelector('#sec-share .btn-copy:nth-child(1)')?.addEventListener('click', generateCode);
+  document.querySelector('#sec-share .btn-copy:nth-child(2)')?.addEventListener('click', copyCode);
+  document.querySelector('.btn-import')?.addEventListener('click', importCode);
+
+  // Expose to window for dynamically generated HTML (match cards, admin buttons)
+  window.saveGroupPred=saveGroupPred;
+  window.saveKoPred=saveKoPred;
+  window.saveGroupResult=saveGroupResult;
+  window.toggleTournament=toggleTournament;
+  window.toggleKoPhase=toggleKoPhase;
+  window.saveKoTeams=saveKoTeams;
+  window.saveKoResult=saveKoResult;
+  window.markChanged=markChanged;
+  window.generateCode=generateCode;
+  window.copyCode=copyCode;
+  window.importCode=importCode;
+  window.deleteUser=deleteUser;
+
+  // Show auth screen
+  document.getElementById('auth-screen').style.display='flex';
+  authMode('login');
+
+  // Firebase boot
+  (async()=>{
+    const {initializeApp}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+    const {getAuth,onAuthStateChanged}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+    const {getFirestore}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const app=initializeApp({
+      apiKey:"AIzaSyBHwbAZyXDkNBcKyD0rinN8Zg556EDkRmI",
+      authDomain:"mundial-2026-e1f51.firebaseapp.com",
+      projectId:"mundial-2026-e1f51",
+      storageBucket:"mundial-2026-e1f51.firebasestorage.app",
+      messagingSenderId:"642695427613",
+      appId:"1:642695427613:web:954a41639654ff5a3138f4"
+    });
+    _auth=getAuth(app);
+    _db=getFirestore(app);
+    onAuthStateChanged(_auth,user=>{
+      if(user){initApp(user.uid);}
+      else{document.getElementById('auth-screen').style.display='flex';authMode('login');}
+    });
+  })();
+});
 </script>
 </body>
 </html>
