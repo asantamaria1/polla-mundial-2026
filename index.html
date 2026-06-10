@@ -1696,13 +1696,49 @@ function importCode(){
 // ══════════════════════════════════════
 
 // ══════════════════════════════════════
-// BOOT
+// BOOT — Firebase module
 // ══════════════════════════════════════
 document.getElementById('auth-screen').style.display='flex';
 authMode('login');
-</script>
-<script type="module">
-// Module script disabled — all Firebase logic is inline above via dynamic import
-</script>
+
+(async()=>{
+  const {initializeApp}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+  const {getAuth,onAuthStateChanged}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+  const {getFirestore}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  const app=initializeApp({
+    apiKey:"AIzaSyBHwbAZyXDkNBcKyD0rinN8Zg556EDkRmI",
+    authDomain:"mundial-2026-e1f51.firebaseapp.com",
+    projectId:"mundial-2026-e1f51",
+    storageBucket:"mundial-2026-e1f51.firebasestorage.app",
+    messagingSenderId:"642695427613",
+    appId:"1:642695427613:web:954a41639654ff5a3138f4"
+  });
+  _auth=getAuth(app);
+  _db=getFirestore(app);
+  onAuthStateChanged(_auth,user=>{
+    if(user){initApp(user.uid);}
+    else{document.getElementById('auth-screen').style.display='flex';authMode('login');}
+  });
+})();
+
+// Exponer funciones al scope global para los onclick del HTML
+window.authMode=authMode;
+window.doLogin=doLogin;
+window.doRegister=doRegister;
+window.doLogout=doLogout;
+window.doForgotPassword=doForgotPassword;
+window.showTab=showTab;
+window.saveGroupPred=saveGroupPred;
+window.saveKoPred=saveKoPred;
+window.saveGroupResult=saveGroupResult;
+window.toggleTournament=toggleTournament;
+window.toggleKoPhase=toggleKoPhase;
+window.saveKoTeams=saveKoTeams;
+window.saveKoResult=saveKoResult;
+window.markChanged=markChanged;
+window.generateCode=generateCode;
+window.copyCode=copyCode;
+window.importCode=importCode;
+window.deleteUser=deleteUser;
 </body>
 </html>
